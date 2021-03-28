@@ -1,0 +1,321 @@
+#!/bin/bash
+
+# default settings
+export POSIXLY_CORRECT=1 
+LC_NUMERIC='en_US.utf8'
+
+# global variable
+DELIM=';'
+WIDTH=
+DATE_AFTER=
+DATE_BEFORE=
+COMMAND=
+
+# arrays
+declare -a SEL_TICK
+declare -a FILES
+
+# --------------------------------------------------
+
+# prints usage
+usage() {
+    echo  "./tradelog [-h|--help] [FILTR] [PŘÍKAZ] [LOG [LOG2 [...]]]"
+    echo "
+    PŘÍKAZ může být jeden z:
+
+    list-tick – výpis seznamu vyskytujících se burzovních symbolů, tzv. “tickerů”.
+    profit – výpis celkového zisku z uzavřených pozic.
+    pos – výpis hodnot aktuálně držených pozic seřazených sestupně dle hodnoty.
+    last-price – výpis poslední známé ceny pro každý ticker.
+    hist-ord – výpis histogramu počtu transakcí dle tickeru.
+    graph-pos – výpis grafu hodnot držených pozic dle tickeru.
+
+    FILTR může být kombinace následujících:
+    -a DATETIME – after: jsou uvažovány pouze záznamy PO tomto datu (bez tohoto data). DATETIME je formátu YYYY-MM-DD HH:MM:SS.
+    -b DATETIME – before: jsou uvažovány pouze záznamy PŘED tímto datem (bez tohoto data).
+    -t TICKER – jsou uvažovány pouze záznamy odpovídající danému tickeru. Při více výskytech přepínače se bere množina všech uvedených tickerů.
+    -w WIDTH – u výpisu grafů nastavuje jejich šířku, tedy délku nejdelšího řádku na WIDTH. Tedy, WIDTH musí být kladné celé číslo. Více výskytů přepínače je chybné spuštění.
+    -h a --help vypíšou nápovědu s krátkým popisem každého příkazu a přepínače.
+    "
+    exit 0
+}
+
+# prints logs that are newer than given datetime in variable DATE_BEFORE
+# if not set it prints all 
+date_after() {
+    if [[ $DATE_AFTER ]]; then
+        awk -F $DELIM -v dateA="$DATE_AFTER" '{ if (dateA <= $1) { print } }'
+    else
+        awk '{print}'
+    fi
+    exit 0
+}
+
+# prints logs that are older than given datetime in variable DATE_BEFORE
+# if not set it prints all 
+date_before() {
+    if [[ $DATE_BEFORE ]]; then
+        awk -F $DELIM -v dateB="$DATE_BEFORE" '{ if (dateB >= $1) { print } }'
+    else
+        awk '{print}'
+    fi
+    exit 0
+}
+
+# prints logs that contain set tickers, if non is set it prints all
+filter_ticks() {
+    if [[ -z $SEL_TICK ]]; then
+        awk '{ print }'
+    else
+        awk -v d="${SEL_TICK[*]}" -F $DELIM 'BEGIN { split(d, ticks, " ") }
+        {
+            for (key in ticks) {
+                if ($2 == ticks[key]) 
+                    print
+            }
+        }'
+    fi
+    exit 0
+}
+
+# combines filters; differentiate between reading from file and stdin
+print_file() {
+    if [[ -z $FILES ]]; then
+        filter_ticks
+    else
+        for i in ${FILES[*]}; do
+            if [[ $i == *".log.gz" ]]; then
+                gzip -dc $i | filter_ticks
+            elif [[ $i == *".log" ]]; then
+                cat $i | filter_ticks
+            fi
+        done
+    fi | date_after | date_before
+    exit 0
+}
+
+# prints sorted tickers that are in the log file
+list_tick() {
+    print_file | cut -d $DELIM -f2 | sort | uniq
+    exit 0
+}
+
+# prints the total profit of all transactions within the file
+# difference of "sell" and "buy"
+profit() {
+    print_file | awk -F $DELIM -v sum=0 '
+    {
+        if ($3 == "buy") {
+            sum -= ($4 * $6)
+        } 
+        else {
+            sum += ($4 * $6)
+        }
+    }
+    END { printf "%.2f\n", sum }'
+    exit 0
+}
+
+# prints the total value of held units for each tickers
+# sorted by the value in descending order
+# ( [volume of bought units] - [volume of sold units] ) * [latest value per unit]
+pos() {
+    print_file | awk -F $DELIM '
+    {
+        if ($3 == "buy")
+            vol[$2] += $6;
+        else
+            vol[$2] -= $6;
+
+        price[$2] = $4;
+    }
+    END { 
+        for (key in vol) {
+            # formating float number
+            digits = sprintf("%.2f", vol[key] * price[key]);
+            if (max < length(digits)) {
+                max = length(digits);
+            }
+        }
+
+        for (key in vol) 
+            printf "%-10s: %*.2f\n", key, max, vol[key] * price[key] 
+    }' | sort -k3 -n -r
+    exit 0
+}
+
+# prints latest value per unit
+# sorted alphabetically
+last_price() {
+    print_file | awk -F $DELIM '
+    { price[$2] = $4; }
+    END { 
+        # formating float number
+        for (key in price) {
+            digits = sprintf("%.2f", price[key]);
+            if (max < length(digits)) {
+                max = length(digits);
+            }
+        }
+
+        for (key in price) 
+            printf "%-10s: %*.2f\n", key, max, price[key] 
+    }' | sort 
+    exit 0
+}
+
+# prints a horizontal graph of all the transaction
+# variable WIDTH sets the number of characters (representing graph unit) 
+#   for ticker with the highest total of transaction
+# if not set each transaction value is one character
+# '#' represents positive numbers; '!' represents negative numbers
+# sorted alphabetically
+hist_ord() {
+    print_file | awk -F $DELIM -v w="$WIDTH" '
+    { trans[$2] += 1 }
+    END {
+        for (key in trans)
+            if (max < trans[key])
+                max = trans[key]
+
+        # setting width
+        if (w)
+            w /= max
+        else
+            w = 1
+
+        # printing graph
+        for (key in trans) {
+            printf "%-10s:", key 
+            for (i = 0.99; i < trans[key] * w; i++) {
+                if (i < 1)
+                    printf " "
+                printf "#"
+            }
+            printf "\n"
+        }
+    }' | sort
+    exit 0
+}
+
+# prints a horizontal graph of total value of held units per ticker (see pos)
+# variable WIDTH sets the number of characters (representing graph unit) 
+#   for ticker with the highest value
+# if not set WIDTH is set to 1000 as default
+# '#' represents positive numbers; '!' represents negative numbers
+# sorted alphabetically
+graph_pos() {
+    print_file | awk -F $DELIM -v w=$WIDTH '
+    {
+        if ($3 == "buy") {
+            vol[$2] += $6;
+        }
+        else {
+            vol[$2] -= $6;
+        }
+        price[$2] = $4;
+    }
+    END { 
+        # MAX(ABS(a), ABS(b))
+        for (key in vol) {
+            value = vol[key] * price[key];
+            if (value < 0)
+                value *= -1
+            if (max < value)
+                max = value;
+        }
+
+        # setting width
+        if (w)
+            w /= max
+        else
+            w = 1 / 1000
+
+        # printing graph
+        for (key in vol) {
+            printf "%-10s:", key 
+            if (vol[key] * price[key] > 0) {  # positive numbers
+                for (i = 0.99; i < vol[key] * price[key] * w; i++) {
+                    if (i < 1)
+                        printf " "
+                    printf "#"
+                }
+            }
+            else {   # negative numbers
+                for (i = 0.99; i < -1 * vol[key] * price[key] * w; i++) {
+                    if (i < 1)
+                        printf " "
+                    printf "!"
+                }
+            }
+            printf "\n"
+        }
+    }' | sort
+    exit 0
+}
+
+# ----------------------------------------------------
+
+# loading filters from arguments
+while getopts "a:b:t:w:h" opt; do
+    case ${opt} in
+        a)  # date after
+            DATE_AFTER=${OPTARG}
+            ;;
+        b)  # date before
+            DATE_BEFORE=${OPTARG}
+            ;;
+        t)  # tickers
+            SEL_TICK+=(${OPTARG})
+            ;;
+        w)  # width; allowed to be set only once
+            if [[ ${OPTARG} -le 0 || $WIDTH ]]; then
+                echo "Chyba vstupu width!" >&2
+                exit 1
+            else
+                WIDTH=${OPTARG}
+            fi
+            ;;
+        h)  # prints usage
+            usage
+            ;;
+        *)  # end of flags arguments
+            break;
+            ;;
+    esac
+done
+shift $((OPTIND-1))
+
+# loading commands from arguments
+for i in $@; do
+    case $i in
+        list-tick | profit | pos | last-price | hist-ord |  graph-pos)
+            # allowed to load only one command
+            if [[ -z $COMMAND ]]; then
+                COMMAND=$i
+            fi
+            ;;
+        --help) # prints usage
+            usage
+            ;;
+        *)
+            # loading files; checking file types
+            if [[ ! -f $i ]]; then
+                echo "Neplatny prikaz!" >&2
+                exit 1
+            elif [[ $i != *".log.gz" && $i != *".log" ]]; then
+                echo "Spatny format souboru" >&2
+                exit 1
+            else
+                FILES+="$i "
+            fi
+            ;;
+    esac
+done
+
+# executing commands
+if [[ $COMMAND ]]; then
+    eval $(echo ${COMMAND} | tr '-' '_')
+else
+    print_file
+fi
