@@ -1,8 +1,16 @@
-#!/bin/bash
+#!/bin/sh
+
+# Subject: IOS (Operating Systems)
+#          Project 1 - Stock exchange market reports
+# Brief: Program allows user to process data logs
+#
+# File: tradelog (Shell)
+# Author: Hung Do, BUT FIT
+# Date: 03/04/2021
 
 # default settings
 export POSIXLY_CORRECT=1 
-LC_NUMERIC='en_US.utf8'
+export LC_ALL='C'
 
 # global variable
 DELIM=';'
@@ -11,31 +19,54 @@ DATE_AFTER=
 DATE_BEFORE=
 COMMAND=
 
-# arrays
-declare -a SEL_TICK
-declare -a FILES
-
 # --------------------------------------------------
 
 # prints usage
 usage() {
-    echo  "./tradelog [-h|--help] [FILTR] [PŘÍKAZ] [LOG [LOG2 [...]]]"
+    echo  "./tradelog [-h|--help] [FILTER] [COMMAND] [LOG_FILES]"
     echo "
-    PŘÍKAZ může být jeden z:
+    Only one command can be called:
+        list-tick – a list of tickers in the log file; sorted alphabetically
+        profit – total value of all close-outs
+        pos – list of held positions per ticker; sorted by value 
+        last-price – last known value of a unit per ticker, sorted alphabetically
+        hist-ord – graph representing a number of transaction per ticker; sorted alphabetically
+        graph-pos – graph representing value of held positions per ticker; sorted alphabetically
 
-    list-tick – výpis seznamu vyskytujících se burzovních symbolů, tzv. “tickerů”.
-    profit – výpis celkového zisku z uzavřených pozic.
-    pos – výpis hodnot aktuálně držených pozic seřazených sestupně dle hodnoty.
-    last-price – výpis poslední známé ceny pro každý ticker.
-    hist-ord – výpis histogramu počtu transakcí dle tickeru.
-    graph-pos – výpis grafu hodnot držených pozic dle tickeru.
+    FILTERS can be set with these flags below:
+        -a DATETIME – after: FILTER OUT transactions that happened BEFORE set DATETIME
+                      format of DATETIME is 'YYYY-MM-DD HH:MM:SS'
 
-    FILTR může být kombinace následujících:
-    -a DATETIME – after: jsou uvažovány pouze záznamy PO tomto datu (bez tohoto data). DATETIME je formátu YYYY-MM-DD HH:MM:SS.
-    -b DATETIME – before: jsou uvažovány pouze záznamy PŘED tímto datem (bez tohoto data).
-    -t TICKER – jsou uvažovány pouze záznamy odpovídající danému tickeru. Při více výskytech přepínače se bere množina všech uvedených tickerů.
-    -w WIDTH – u výpisu grafů nastavuje jejich šířku, tedy délku nejdelšího řádku na WIDTH. Tedy, WIDTH musí být kladné celé číslo. Více výskytů přepínače je chybné spuštění.
-    -h a --help vypíšou nápovědu s krátkým popisem každého příkazu a přepínače.
+            e.g. ./tradelog -a '2000-01-01 00:00:00' [COMMAND] [LOG_FILES]
+                program works with transactions that happened from '2000-01-01 00:00:00' onward (including that DATETIME)
+
+        -b DATETIME – before: FILTER OUT transaction that happend AFTER set DATETIME
+                      format of DATETIME is 'YYYY-MM-DD HH:MM:SS' 
+
+            e.g. ./tradelog -b '2000-01-01 00:00:00' [COMMAND] [LOG_FILES]
+                program works with transactions that happened up to '2000-01-01 00:00:00' (including that DATETIME)
+
+        -t TICKER – FILTER OUT transactions that aren't connected with selected TICKERS; multiple TICKERS can be selected
+                    if no TICKER is selected, program works with all of them
+
+            e.g. ./tradelog -t TSLA -t AMZN [COMMAND] [LOG_FILES]
+                program works with TSLA and AMZN's transactions
+                
+        -w WIDTH – sets the variable WIDTH (only positive value allowed) of the highest absolute value in the graph
+                   this flag can be set only once 
+
+            e.g. ./tradelog -tA -tB -tC -w 5 [hist-ord|graph-pos] [LOG_FILES]
+                A         : #####
+                B         : ##
+                C         : !!!
+
+        -h a --help – displays this help and exit
+    
+    LOG FILES format:
+        DATE_TIME;TICKER;TRANSACTION_TYPE;VALUE_PER_UNIT;CURRENCY;NUMBER_OF_UNITS;LOG_ID
+        Supported compressed file format: .gz
+
+        It is allowed to import multiple LOG FILES; if no LOG FILE is selected, program reads from STDIN
     "
     exit 0
 }
@@ -43,7 +74,7 @@ usage() {
 # prints logs that are newer than given datetime in variable DATE_BEFORE
 # if not set it prints all 
 date_after() {
-    if [[ $DATE_AFTER ]]; then
+    if [ -n "$DATE_AFTER" ]; then
         awk -F $DELIM -v dateA="$DATE_AFTER" '{ if (dateA <= $1) { print } }'
     else
         awk '{print}'
@@ -54,7 +85,7 @@ date_after() {
 # prints logs that are older than given datetime in variable DATE_BEFORE
 # if not set it prints all 
 date_before() {
-    if [[ $DATE_BEFORE ]]; then
+    if [ -n "$DATE_BEFORE" ]; then
         awk -F $DELIM -v dateB="$DATE_BEFORE" '{ if (dateB >= $1) { print } }'
     else
         awk '{print}'
@@ -64,10 +95,10 @@ date_before() {
 
 # prints logs that contain set tickers, if non is set it prints all
 filter_ticks() {
-    if [[ -z $SEL_TICK ]]; then
+    if [ -z "$SEL_TICK" ]; then
         awk '{ print }'
     else
-        awk -v d="${SEL_TICK[*]}" -F $DELIM 'BEGIN { split(d, ticks, " ") }
+        awk -v d="${SEL_TICK}" -F $DELIM 'BEGIN { split(d, ticks, " ") }
         {
             for (key in ticks) {
                 if ($2 == ticks[key]) 
@@ -80,13 +111,13 @@ filter_ticks() {
 
 # combines filters; differentiate between reading from file and stdin
 print_file() {
-    if [[ -z $FILES ]]; then
+    if [ -z "$FILES" ]; then
         filter_ticks
     else
-        for i in ${FILES[*]}; do
-            if [[ $i == *".log.gz" ]]; then
+        for i in ${FILES}; do
+            if [ `echo $i | grep '\.gz'` ]; then
                 gzip -dc $i | filter_ticks
-            elif [[ $i == *".log" ]]; then
+            else
                 cat $i | filter_ticks
             fi
         done
@@ -116,7 +147,7 @@ profit() {
     exit 0
 }
 
-# prints the total value of held units for each tickers
+# prints the total value of held positions for each tickers
 # sorted by the value in descending order
 # ( [volume of bought units] - [volume of sold units] ) * [latest value per unit]
 pos() {
@@ -168,7 +199,7 @@ last_price() {
 # variable WIDTH sets the number of characters (representing graph unit) 
 #   for ticker with the highest total of transaction
 # if not set each transaction value is one character
-# '#' represents positive numbers; '!' represents negative numbers
+# '#' represents a positive number; '!' represents a negative number
 # sorted alphabetically
 hist_ord() {
     print_file | awk -F $DELIM -v w="$WIDTH" '
@@ -198,11 +229,11 @@ hist_ord() {
     exit 0
 }
 
-# prints a horizontal graph of total value of held units per ticker (see pos)
+# prints a horizontal graph of total value of held positions per ticker (see pos)
 # variable WIDTH sets the number of characters (representing graph unit) 
 #   for ticker with the highest value
 # if not set WIDTH is set to 1000 as default
-# '#' represents positive numbers; '!' represents negative numbers
+# '#' represents a positive number; '!' represents a negative number
 # sorted alphabetically
 graph_pos() {
     print_file | awk -F $DELIM -v w=$WIDTH '
@@ -257,64 +288,91 @@ graph_pos() {
 # ----------------------------------------------------
 
 # loading filters from arguments
-while getopts "a:b:t:w:h" opt; do
-    case ${opt} in
-        a)  # date after
-            DATE_AFTER=${OPTARG}
+while [ -n "$1" ]; do
+    case "$1" in
+        -h | --help) # print help
+            usage
+            shift
             ;;
-        b)  # date before
-            DATE_BEFORE=${OPTARG}
-            ;;
-        t)  # tickers
-            SEL_TICK+=(${OPTARG})
-            ;;
-        w)  # width; allowed to be set only once
-            if [[ ${OPTARG} -le 0 || $WIDTH ]]; then
-                echo "Chyba vstupu width!" >&2
+        -a) # date after; checks format
+            if ! echo $2 | grep -Eq "^[0-9]{4}-[0-9]{2}-[0-9]{2} [0-9]{2}:[0-9]{2}:[0-9]{2}"; then
+                echo "Error: wrong DATETIME format" >&2
                 exit 1
             else
-                WIDTH=${OPTARG}
+                # uninitialized variable
+                if [ -z "$DATE_AFTER" ]; then
+                    DATE_AFTER=$2
+                else    # intersection of dates
+                    if [ "$2" < "$DATE_AFTER" ]; then
+                        DATE_AFTER=$2
+                    fi
+                fi
+                shift 2
             fi
             ;;
-        h)  # prints usage
-            usage
-            ;;
-        *)  # end of flags arguments
-            break;
-            ;;
-    esac
-done
-shift $((OPTIND-1))
-
-# loading commands from arguments
-for i in $@; do
-    case $i in
-        list-tick | profit | pos | last-price | hist-ord |  graph-pos)
-            # allowed to load only one command
-            if [[ -z $COMMAND ]]; then
-                COMMAND=$i
+        -b) # date before
+            if ! echo $2 | grep -Eq "^[0-9]{4}-[0-9]{2}-[0-9]{2} [0-9]{2}:[0-9]{2}:[0-9]{2}"; then
+                echo "Error: wrong DATETIME format" >&2
+                exit 1
+            else
+                # uninitialized variable
+                if [ -z "$DATE_BEFORE" ]; then
+                    DATE_BEFORE=$2
+                else    # intersection of dates
+                    if [ "$2" > "$DATE_BEFORE" ]; then
+                        DATE_BEFORE=$2
+                    fi
+                fi
+                shift 2
             fi
             ;;
-        --help) # prints usage
-            usage
+        -t) # tickers
+            # adding space if it's not a first selected ticker
+            if [ -n "$SEL_TICK" ]; then
+                SEL_TICK="$SEL_TICK "
+            fi
+            SEL_TICK="$SEL_TICK$2"
+            shift 2
+            ;;
+        -w)  # width; allowed to be set only once
+            if [ -n "$WIDTH" ]; then
+                echo "Error: $1 flag has been set already!" >&2
+                exit 1
+            elif [ $2 -le 0 ]; then
+                echo "Error: $1 parameter must be a positive number!" >&2
+                exit 1
+            else
+                WIDTH=$2
+            fi
+            shift 2
+            ;;
+        list-tick | profit | pos | last-price | hist-ord | graph-pos)
+            # allowed to load only one command (only first one will be chosen)
+            if [ -z "$COMMAND" ]; then
+                COMMAND=$1
+            fi
+            shift
             ;;
         *)
             # loading files; checking file types
-            if [[ ! -f $i ]]; then
-                echo "Neplatny prikaz!" >&2
-                exit 1
-            elif [[ $i != *".log.gz" && $i != *".log" ]]; then
-                echo "Spatny format souboru" >&2
+            if [ ! -f "$1" ]; then
+                echo "Error: command not found!" >&2
                 exit 1
             else
-                FILES+="$i "
+                # adding space if variable was already initialized
+                if [ -n "$FILES" ]; then
+                    FILES="$FILES "
+                fi
+                FILES="$FILES$1"
             fi
+            shift
             ;;
     esac
 done
 
+
 # executing commands
-if [[ $COMMAND ]]; then
+if [ -n "$COMMAND" ]; then
     eval $(echo ${COMMAND} | tr '-' '_')
 else
     print_file
