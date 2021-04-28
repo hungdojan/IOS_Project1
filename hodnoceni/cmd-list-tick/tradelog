@@ -147,7 +147,7 @@ profit() {
     exit 0
 }
 
-# prints the total value of held positions for each tickers
+# prints the total value of held units for each tickers
 # sorted by the value in descending order
 # ( [volume of bought units] - [volume of sold units] ) * [latest value per unit]
 pos() {
@@ -199,7 +199,7 @@ last_price() {
 # variable WIDTH sets the number of characters (representing graph unit) 
 #   for ticker with the highest total of transaction
 # if not set each transaction value is one character
-# '#' represents a positive number; '!' represents a negative number
+# '#' represents positive numbers; '!' represents negative numbers
 # sorted alphabetically
 hist_ord() {
     print_file | awk -F $DELIM -v w="$WIDTH" '
@@ -229,11 +229,11 @@ hist_ord() {
     exit 0
 }
 
-# prints a horizontal graph of total value of held positions per ticker (see pos)
+# prints a horizontal graph of total value of held units per ticker (see pos)
 # variable WIDTH sets the number of characters (representing graph unit) 
 #   for ticker with the highest value
 # if not set WIDTH is set to 1000 as default
-# '#' represents a positive number; '!' represents a negative number
+# '#' represents positive numbers; '!' represents negative numbers
 # sorted alphabetically
 graph_pos() {
     print_file | awk -F $DELIM -v w=$WIDTH '
@@ -373,7 +373,7 @@ done
 
 # executing commands
 if [ -n "$COMMAND" ]; then
-    $(echo ${COMMAND} | tr '-' '_')
+    eval $(echo ${COMMAND} | tr '-' '_')
 else
     print_file
 fi
